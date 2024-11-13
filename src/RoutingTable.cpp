@@ -40,7 +40,31 @@ RoutingTable::RoutingTable(const std::filesystem::path& routingTablePath) {
 
 std::optional<RoutingEntry> RoutingTable::getRoutingEntry(ip_addr ip) {
     // TODO: Your code below
-
+    
+    RoutingEntry best_match;
+    
+    // this will give us the minimum prefix length
+    for (auto& entry : routingEntries) {
+        ip_addr cmp_ip = entry.dest;
+        ip_addr tmp = cmp_ip;
+        uint32_t networkBitLen = 0; // This gives us the number of bits for the actual network
+        const uint32_t MAX_NETWORK_BIT_LEN = 32;
+        for(int i = 0; i < MAX_NETWORK_BIT_LEN; i++) {
+            int isOne = tmp & b'1; // If lsb is 0 --> return 0, lsb is 1 --> return 1
+            if(isOne) {
+                networkBitLen = 32 - i;
+                break;
+            }
+            tmp >> 1;
+        }
+        uint32_t target = cmp_ip & entry.mask;
+        
+        // Do longest prefix logic here
+        // Ensure that ip matches at MINIMUM networkBitLen bits of entry.dest (cmp_ip)
+        
+    }
+    
+    
     return routingEntries[0]; // Placeholder
 }
 
