@@ -163,10 +163,16 @@ You should now have all the pieces needed to build and run the router:
 * A routing table file that corresponds to the routing table for the router node in that topology
 * The starter code
 
-You first want to ssh into the AWS remote host, forwarding the port for Mininet. You can do this by running the following command:
+You first want to ssh into the AWS remote host, forwarding the port for Mininet if running locally. You can do this by running the following command:
 
+**If you are running the server and POX locally:**
 ```bash
 $ ssh -i <your-key.pem> -R 6633:localhost:6633 ubuntu@<your-aws-ip>
+```
+
+**If you are running the server and POX on the AWS remote host:**
+```bash
+$ ssh -i <your-key.pem> ubuntu@<your-aws-ip>
 ```
 
 > 6633 is the default port used by POX for communication. Do not try to use a different port; this is not an arbitrary choice. 
@@ -193,12 +199,16 @@ Mininet and POX need to be started for your router to run.
 
 > Note: Mininet will connect to POX, so POX should be running first. However, it is okay if you need to restart POX while Mininet is running, as long as there is not a large amount of time where Mininet is running but POX is not.*
 
-Now, you can run the router:
+Now, you can run the router (again, wherever you are developing your code):
 ```bash
 $ ./StaticRouter -r ../rtable
 ```
 
 By default, SR looks for `rtable` from the current working directory. This can be overridden by the `-r` option.
+
+In summary, always run Mininet on AWS:
+- If you are developing on AWS, run POX and StaticRouter on AWS as well.
+- If you are developing locally, set up reverse port forwarding for Port 6633 (with the command provided above). Run POX and StaticRouter locally. 
 
 <a name="background"></a>
 ## Background: Routing

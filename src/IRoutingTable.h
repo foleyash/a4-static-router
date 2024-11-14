@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <optional>
 
 /**
  * @struct RoutingEntry
@@ -49,9 +50,9 @@ public:
     /**
      * @brief Retrieves the routing entry for a specified IP address using longest prefix matching.
      * @param ip The IP address to find a route for.
-     * @return The routing entry associated with the specified IP address.
+     * @return The routing entry associated with the specified IP address, if one exists.
      */
-    virtual RoutingEntry getRoutingEntry(ip_addr ip) = 0;
+    virtual std::optional<RoutingEntry> getRoutingEntry(ip_addr ip) = 0;
 
     /**
      * @brief Retrieves the routing interface for a specified interface name.

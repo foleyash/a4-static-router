@@ -16,7 +16,7 @@ public:
      */
     explicit RoutingTable(const std::filesystem::path& routingTablePath);
 
-    RoutingEntry getRoutingEntry(ip_addr ip) override;
+    std::optional<RoutingEntry> getRoutingEntry(ip_addr ip) override;
 
     RoutingInterface getRoutingInterface(const std::string& iface) override;
 

@@ -38,7 +38,7 @@ RoutingTable::RoutingTable(const std::filesystem::path& routingTablePath) {
     }
 }
 
-RoutingEntry RoutingTable::getRoutingEntry(ip_addr ip) {
+std::optional<RoutingEntry> RoutingTable::getRoutingEntry(ip_addr ip) {
     // TODO: Your code below
     
     RoutingEntry best_match;
