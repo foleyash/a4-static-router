@@ -1,14 +1,17 @@
 #include "BridgeClient.h"
 
-#include <iostream>
 #include <spdlog/spdlog.h>
+
+#include <iostream>
 
 #include "ArpCache.h"
 #include "BridgeSender.h"
 #include "utils.h"
 
 // Constructor
-BridgeClient::BridgeClient(std::filesystem::path routingTablePath, std::string pcapPrefix) : dumper(pcapPrefix + "_input.pcap") {
+BridgeClient::BridgeClient(std::filesystem::path routingTablePath,
+                           std::string pcapPrefix)
+    : dumper(pcapPrefix + "_input.pcap") {
     routingTable = std::make_shared<RoutingTable>(routingTablePath);
 
     client = std::make_shared<WSClient>();
@@ -29,23 +32,27 @@ BridgeClient::BridgeClient(std::filesystem::path routingTablePath, std::string p
     websocketpp::lib::error_code ec;
     WSClient::connection_ptr con = client->get_connection(wsUri, ec);
     if (ec) {
-        std::cout << "could not create connection because: " << ec.message() << std::endl;
+        std::cout << "could not create connection because: " << ec.message()
+                  << std::endl;
         throw std::runtime_error("Could not create connection");
     }
 
-    auto bridgeSender = std::make_shared<BridgeSender>(client, con);
-    auto arpCache = std::make_unique<ArpCache>(std::chrono::seconds(15), bridgeSender, routingTable);
-    staticRouter = std::make_unique<StaticRouter>(std::move(arpCache), routingTable, bridgeSender);
+    auto bridgeSender = std::make_shared<BridgeSender>(client, con, pcapPrefix);
+    auto arpCache = std::make_unique<ArpCache>(std::chrono::seconds(15),
+                                               bridgeSender, routingTable);
+    staticRouter = std::make_unique<StaticRouter>(std::move(arpCache),
+                                                  routingTable, bridgeSender);
 
     client->connect(con);
 }
 
-
 // Method to request interfaces
-void BridgeClient::setInterfaces(const router_bridge::InterfaceUpdate& interfaces) {
+void BridgeClient::setInterfaces(
+    const router_bridge::InterfaceUpdate& interfaces) {
     for (const auto& iface : interfaces.interfaces()) {
         mac_addr mac;
-        std::copy(iface.mac().begin(), iface.mac().begin() + mac.size(), mac.begin());
+        std::copy(iface.mac().begin(), iface.mac().begin() + mac.size(),
+                  mac.begin());
         routingTable->setRoutingInterface(iface.name(), mac, iface.ip());
     }
 
@@ -57,8 +64,9 @@ void BridgeClient::onMessage(const std::string& message) {
     protoMessage.ParseFromString(message);
 
     if (protoMessage.has_router_packet()) {
-        auto &packetMessage = protoMessage.router_packet();
-        std::vector<uint8_t> packet(packetMessage.data().begin(), packetMessage.data().end());
+        auto& packetMessage = protoMessage.router_packet();
+        std::vector<uint8_t> packet(packetMessage.data().begin(),
+                                    packetMessage.data().end());
         dumper.dump(packet);
 
         staticRouter->handlePacket(packet, packetMessage.interface());
@@ -67,6 +75,4 @@ void BridgeClient::onMessage(const std::string& message) {
     }
 }
 
-void BridgeClient::run() {
-    client->run();
-}
+void BridgeClient::run() { client->run(); }

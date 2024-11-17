@@ -22,6 +22,8 @@ public:
 
     void setRoutingInterface(const std::string& iface, const mac_addr& mac, const ip_addr& ip) override;
 
+    const std::unordered_map<std::string, RoutingInterface>& getRoutingInterfaces() const override;
+
 private:
     std::vector<RoutingEntry> routingEntries; /**< Collection of routing entries. */
     std::unordered_map<std::string, RoutingInterface> routingInterfaces; /**< Map of interface names to routing interfaces. */

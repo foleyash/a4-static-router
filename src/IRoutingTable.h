@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <unordered_map>
 #include <string>
 #include <optional>
 
@@ -68,6 +69,12 @@ public:
      * @param ip The IP address to assign to the network interface.
      */
     virtual void setRoutingInterface(const std::string& iface, const mac_addr& mac, const ip_addr& ip) = 0;
+
+    /**
+     * @brief Retrieves all network interfaces in the routing table.
+     * @return A map of interface names to routing interfaces.
+     */
+    virtual const std::unordered_map<std::string, RoutingInterface>& getRoutingInterfaces() const = 0;
 };
 
 #endif //IROUTINGTABLE_H

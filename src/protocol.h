@@ -71,15 +71,6 @@
 #endif
 #define ICMP_DATA_SIZE 28
 
-#define ICMP_TYPE_ECHO_REPLY 0x00
-#define ICMP_TYPE_ECHO_REQUEST 0x08
-#define ICMP_TYPE_TIME_EXCEEDED 0x0b
-#define ICMP_CODE_TIME_EXCEEDED 0x00
-#define ICMP_CODE_DEST_NET_UNREACHABLE 0x00
-#define ICMP_CODE_DEST_HOST_UNREACHABLE 0x01
-#define ICMP_CODE_PORT_UNREACHABLE 0x03
-
-
 /* Structure of a ICMP header
  */
 struct sr_icmp_hdr {

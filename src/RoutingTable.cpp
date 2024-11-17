@@ -75,3 +75,8 @@ RoutingInterface RoutingTable::getRoutingInterface(const std::string& iface) {
 void RoutingTable::setRoutingInterface(const std::string& iface, const mac_addr& mac, const ip_addr& ip) {
     routingInterfaces[iface] = {iface, mac, ip};
 }
+
+const std::unordered_map<std::string, RoutingInterface>& RoutingTable::getRoutingInterfaces() const
+{
+    return routingInterfaces;
+}
