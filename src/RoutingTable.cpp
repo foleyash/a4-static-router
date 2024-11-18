@@ -43,29 +43,41 @@ std::optional<RoutingEntry> RoutingTable::getRoutingEntry(ip_addr ip) {
     
     RoutingEntry best_match;
     
+    int max_match_len = -1;
     // this will give us the minimum prefix length
     for (auto& entry : routingEntries) {
+        ip_addr tmp_ip = ip;
         ip_addr cmp_ip = entry.dest;
-        ip_addr tmp = cmp_ip;
-        uint32_t networkBitLen = 0; // This gives us the number of bits for the actual network
+        ip_addr tmp_mask = entry.mask;
+        uint32_t network_bit_len = 0; // This gives us the number of bits for the actual network
         const uint32_t MAX_NETWORK_BIT_LEN = 32;
         for(int i = 0; i < MAX_NETWORK_BIT_LEN; i++) {
-            int isOne = tmp & b'1; // If lsb is 0 --> return 0, lsb is 1 --> return 1
-            if(isOne) {
-                networkBitLen = 32 - i;
+            int isOne = tmp_mask & b'1; // If lsb is 0 --> return 0, lsb is 1 --> return 1
+            if (isOne) {
+                network_bit_len = 32 - i;
                 break;
             }
-            tmp >> 1;
+            tmp_mask >>= 1;
         }
-        uint32_t target = cmp_ip & entry.mask;
-        
-        // Do longest prefix logic here
-        // Ensure that ip matches at MINIMUM networkBitLen bits of entry.dest (cmp_ip)
-        
+
+        // 255.255.0.0  , target ip is - (192.168.0.37)
+        // 192.167.0.37     netmask 255.0.0.0
+        // 192.168.0.35     netmask 255.255.0.0
+        // 192.168.2.59     netmask 255.255.0.0
+
+        uint32_t target = cmp_ip & entry.mask; // Not sure if this is needed
+        uint32_t tmp = tmp_ip & entry.mask;
+        if (target == tmp) {
+            // Update maxPrefix if longer
+            if (network_bit_len > max_match_len) {
+                max_match_len = network_bit_len;
+                best_match = entry;
+            }
+        }
     }
-    
-    
-    return routingEntries[0]; // Placeholder
+    // Look at network mask bit length (this tells how specific we need to be)
+    // (16) - Prefix (16 bits) is a direct match with our ip (16 bits) (IDEAL MATCH)
+    return best_match; 
 }
 
 RoutingInterface RoutingTable::getRoutingInterface(const std::string& iface) {
