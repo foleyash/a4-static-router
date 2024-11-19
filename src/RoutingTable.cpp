@@ -20,7 +20,7 @@ RoutingTable::RoutingTable(const std::filesystem::path& routingTablePath) {
         if (line.empty()) {
             continue;
         }
-
+        
         std::istringstream iss(line);
         std::string dest, gateway, mask, iface;
         iss >> dest >> gateway >> mask >> iface;
@@ -52,7 +52,7 @@ std::optional<RoutingEntry> RoutingTable::getRoutingEntry(ip_addr ip) {
         uint32_t network_bit_len = 0; // This gives us the number of bits for the actual network
         const uint32_t MAX_NETWORK_BIT_LEN = 32;
         for(int i = 0; i < MAX_NETWORK_BIT_LEN; i++) {
-            int isOne = tmp_mask & b'1; // If lsb is 0 --> return 0, lsb is 1 --> return 1
+            int isOne = tmp_mask & 0b1; // If lsb is 0 --> return 0, lsb is 1 --> return 1
             if (isOne) {
                 network_bit_len = 32 - i;
                 break;
