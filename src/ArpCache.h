@@ -31,6 +31,8 @@ public:
 
     void queuePacket(uint32_t ip, const Packet& packet, const std::string& iface) override;
 
+    Packet createArpPacket(ip_addr sip, ip_addr dip, mac_addr mac);
+
 private:
     void loop();
 
@@ -45,6 +47,11 @@ private:
 
     std::unordered_map<ip_addr, ArpEntry> entries;
     std::unordered_map<ip_addr, ArpRequest> requests;
+
+    // Stores the iface for the next hop Ip addr 
+    std::unordered_map<ip_addr, std::string> interfaces;
+    // Stores the Packet that will be resent as a ARP REQUEST
+    std::unordered_map<ip_addr, Packet> arp_packets;
 };
 
 
