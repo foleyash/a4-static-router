@@ -38,9 +38,7 @@ RoutingTable::RoutingTable(const std::filesystem::path& routingTablePath) {
     }
 }
 
-std::optional<RoutingEntry> RoutingTable::getRoutingEntry(ip_addr ip) {
-    // TODO: Your code below
-    
+std::optional<RoutingEntry> RoutingTable::getRoutingEntry(ip_addr ip) {   
     RoutingEntry best_match;
     
     int max_match_len = -1;
@@ -92,3 +90,9 @@ const std::unordered_map<std::string, RoutingInterface>& RoutingTable::getRoutin
 {
     return routingInterfaces;
 }
+
+// We have a routing table
+// In the routing table, there are next_hop IPs and interfaces (0, 1, 2)
+// 0 , mac, ip 
+// Each interface will correspond to a next_hop IP, and that next_hop IP will correspond to a next_hop MAC address
+// 0, 1, 2, 3, 4, 5
