@@ -32,7 +32,6 @@ void ArpCache::loop() {
 
 void ArpCache::tick() {
     std::unique_lock lock(mutex);
-    
     // Iterate through all outstanding requests
     for (auto it = requests.begin(); it != requests.end(); it++) {
         //  If (currTime - request.lastSent) >= timeout, retransmit packet
@@ -40,12 +39,9 @@ void ArpCache::tick() {
         
         ArpRequest current_request = it->second;
         if (current_request.timesSent >= 7) {
-            // log something and drop request???
             // send ICMP message and use the PACKED attribute
-            
             it = requests.erase(it); // (will also get rid of queued packets for this request)
         }
-        
         else if (now - current_request.lastSent >= std::chrono::seconds(1)) {
             // Resend packet 
             ip_addr ip = current_request.ip;
@@ -58,8 +54,6 @@ void ArpCache::tick() {
             continue;
         }
     }
-
-    // TODO: Your code should end here
 
     // Remove entries that have been in the cache for too long
     std::erase_if(entries, [this](const auto& entry) {
@@ -92,7 +86,7 @@ void ArpCache::queuePacket(uint32_t ip, const Packet& packet, const std::string&
 
     // Check if a request for ip doesn't exist
     if(requests.find(ip) == requests.end()) {
-        ArpRequest request = {ip,std::chrono::steady_clock::now(), 0, {pac}};
+        ArpRequest request = {ip, std::chrono::steady_clock::now(), 1, {}}; // leave last field blank because we push the packet back after the if statement
         requests[ip] = request;
         
         // Need to send initial ARP request here (send to broadcast MAC address ff-ff-ff-ff-ff-ff)
@@ -144,9 +138,6 @@ Packet ArpCache::createArpPacket(ip_addr source_ip, ip_addr dest_ip, mac_addr se
 
     pac.resize(sizeof(sr_ethernet_hdr_t));
     memcpy(pac.data() + sizeof(sr_ethernet_hdr_t), &arp_hdr, sizeof(sr_arp_hdr_t));
-
-    uint16_t crc = cksum(pac.data() + sizeof(sr_ethernet_hdr_t), sizeof(sr_arp_hdr_t));
-    pac.push_back(crc);
 
     return pac;
 }
