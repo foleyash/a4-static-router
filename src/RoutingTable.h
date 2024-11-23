@@ -24,6 +24,8 @@ public:
 
     const std::unordered_map<std::string, RoutingInterface>& getRoutingInterfaces() const override;
 
+    const std::string getInterface(ip_addr ip);
+
 private:
     std::vector<RoutingEntry> routingEntries; /**< Collection of routing entries. */
     std::unordered_map<std::string, RoutingInterface> routingInterfaces; /**< Map of interface names to routing interfaces. */

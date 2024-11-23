@@ -26,7 +26,7 @@ void StaticRouter::handlePacket(std::vector<uint8_t> packet, std::string iface)
 
     /* ORDER OF OPERATIONS */
 
-    // Parse for whether its an IP packet or ARP packet
+    // Parse for whether its an IP packet (ICMP) or ARP packet
 
     /*** ---- IF ARP Packet ---- ***/
 

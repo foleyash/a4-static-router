@@ -8,7 +8,7 @@
 #include "utils.h"
 
 
-ArpCache::ArpCache(std::chrono::milliseconds timeout, std::shared_ptr<IPacketSender> packetSender, std::shared_ptr<IRoutingTable> routingTable)
+ArpCache::ArpCache(std::chrono::milliseconds timeout, std::shared_ptr<IPacketSender> packetSender, std::shared_ptr<RoutingTable> routingTable)
 : timeout(timeout)
 , packetSender(std::move(packetSender))
 , routingTable(std::move(routingTable)) {
@@ -106,6 +106,34 @@ void ArpCache::queuePacket(uint32_t ip, const Packet& packet, const std::string&
 
 // the awaiting packets contain the IP addresses and interfaces in which the resolved MAC addresses should be sent to
 
+// ip = next hop ip address, mac = resolved mac address using ARP
+void ArpCache::sendQueuedPackets(uint32_t ip, mac_addr mac) {
+
+    if (requests.find(ip) == requests.end()) {
+        return;
+    }
+    ArpRequest arps = requests[ip]; // this contains the destion ip 
+    std::string interfaceName = routingTable->getInterface(arps.ip);
+    // this gives us the interface's ip and mac 
+    RoutingInterface interface = routingTable->getRoutingInterface(interfaceName); 
+    /* This loop is supposed to perfrom the following functionality: 
+        - Get the packet 
+        - Modify the ethernet header of the packet and replace the source/dst mac addr
+        - Send the new packet out
+        - THIS ASSUMES THAT TTL AND CHECKSUM WERE HANDLED BY STATIC ROUTER
+        - CHECK IF SENDPACKET ALREADY CHANGES THE MAC BASED ON INTERFACE ????????????????????????????
+    */
+    for (auto & currentP : arps.awaitingPackets) {
+        Packet sending = currentP.packet;
+        sr_ethernet_hdr_t ether_hdr;
+        memcpy(&ether_hdr, sending.data(), sizeof(sr_ethernet_hdr_t));
+        memcpy(ether_hdr.ether_dhost, mac.data(), ETHER_ADDR_LEN);
+        memcpy(ether_hdr.ether_shost, interface.mac.data(), ETHER_ADDR_LEN);
+        memcpy(sending.data(), &ether_hdr, sizeof(sr_ethernet_hdr_t));
+        packetSender->sendPacket(sending,interfaceName);
+    }
+}
+
 // Creates an ARP request packet
 Packet ArpCache::createArpPacket(ip_addr source_ip, ip_addr dest_ip, mac_addr sender_mac) {
     Packet pac;
@@ -142,6 +170,36 @@ Packet ArpCache::createArpPacket(ip_addr source_ip, ip_addr dest_ip, mac_addr se
     return pac;
 }
 
+Packet ArpCache::createICMPPacket(const mac_addr dest_mac, const std::string& iface, const uint8_t type, const uint8_t code, std::optional<Packet> original_pac = std::nullopt) {
+    Packet ICMP_packet;
+    
+    // Create ethernet header information at the front of the packet
+    sr_ethernet_hdr_t eth_hdr;
+    eth_hdr.ether_type = htons(sr_ethertype::ethertype_ip); // IP protocol type
+    memcpy(&eth_hdr.ether_dhost, dest_mac.data(), ETHER_ADDR_LEN);
+    mac_addr sender_mac = routingTable->getRoutingInterface(iface).mac;
+    memcpy(&eth_hdr.ether_shost, sender_mac.data(), ETHER_ADDR_LEN);
+
+    // TODO: Create IP header information
+    sr_ip_hdr_t ip_hdr;
+    
+
+    // TODO: Type 0
+    
+    // Type 3
+    if (type == 3) {
+        if (!original_pac.has_value()) {
+            throw std::invalid_argument("Must assign original packet for type 3"); 
+        }
+        sr_icmp_t3_hdr_t icmp_t3_hdr;
+        icmp_t3_hdr.icmp_type = type;
+        icmp_t3_hdr.icmp_code = code;
+        icmp_t3_hdr.next_mtu = 0;
+        memcpy(icmp_t3_hdr.data, &original_pac + sizeof(sr_ethernet_hdr_t), sizeof(sr_ip_hdr_t) + std::min(static_cast<size_t>(8), original_pac->size() - sizeof(sr_ethernet_hdr_t) - sizeof(sr_ip_hdr_t)));
+        
+    }
+    // TODO: Type 11
+}
 // CHECK FOR CRC???
 // Figure out which interface to exit on, and then use that interface's mac address as the source address
 
