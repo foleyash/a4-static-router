@@ -8,7 +8,7 @@
 #include "utils.h"
 
 
-ArpCache::ArpCache(std::chrono::milliseconds timeout, std::shared_ptr<IPacketSender> packetSender, std::shared_ptr<RoutingTable> routingTable)
+ArpCache::ArpCache(std::chrono::milliseconds timeout, std::shared_ptr<IPacketSender> packetSender, std::shared_ptr<IRoutingTable> routingTable)
 : timeout(timeout)
 , packetSender(std::move(packetSender))
 , routingTable(std::move(routingTable)) {
@@ -82,6 +82,27 @@ std::optional<mac_addr> ArpCache::getEntry(uint32_t ip) {
 
 void ArpCache::queuePacket(uint32_t ip, const Packet& packet, const std::string& iface) {
     std::unique_lock lock(mutex);
+
+    /*This logic right here is to ensure that we store the interface on which a Packet is coming in on
+      We accomplish this by:
+      - First taking apart the packet and seeing the destination host
+      - We then compare this destination host with all of our own interfaces (as one of these must match)
+      - Then we finally store for this Packet the routing Interface on which it came in on in a map called icmps
+      - This map can then be called for in other functions when needing to send back and icmp message.
+      - This also allows us to keep use of the definition we had where iface will be the NEXT HOP iface not the iface on which it came in on
+    */
+    sr_ethernet_hdr_t eth_hdr;
+    memcpy(&eth_hdr, packet.data(), sizeof(sr_ethernet_hdr_t));
+    mac_addr incomingMac;
+    memcpy(&incomingMac, eth_hdr.ether_dhost, ETHER_ADDR_LEN);
+    const std::unordered_map<std::string, RoutingInterface> check = routingTable->getRoutingInterfaces();
+    for (const auto& pair : check) {
+        if (pair.second.mac == incomingMac) {
+            icmps[packet] = pair.second;
+            break;
+        }
+    }
+
     AwaitingPacket pac = {packet, iface};
 
     // Check if a request for ip doesn't exist
@@ -113,9 +134,6 @@ void ArpCache::sendQueuedPackets(uint32_t ip, mac_addr mac) {
         return;
     }
     ArpRequest arps = requests[ip]; // this contains the destion ip 
-    std::string interfaceName = routingTable->getInterface(arps.ip);
-    // this gives us the interface's ip and mac 
-    RoutingInterface interface = routingTable->getRoutingInterface(interfaceName); 
     /* This loop is supposed to perfrom the following functionality: 
         - Get the packet 
         - Modify the ethernet header of the packet and replace the source/dst mac addr
@@ -125,6 +143,8 @@ void ArpCache::sendQueuedPackets(uint32_t ip, mac_addr mac) {
     */
     for (auto & currentP : arps.awaitingPackets) {
         Packet sending = currentP.packet;
+        std::string interfaceName = currentP.iface;
+        RoutingInterface interface = routingTable->getRoutingInterface(interfaceName);
         sr_ethernet_hdr_t ether_hdr;
         memcpy(&ether_hdr, sending.data(), sizeof(sr_ethernet_hdr_t));
         memcpy(ether_hdr.ether_dhost, mac.data(), ETHER_ADDR_LEN);

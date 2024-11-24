@@ -79,16 +79,6 @@ std::optional<RoutingEntry> RoutingTable::getRoutingEntry(ip_addr ip) {
 }
 
 
-// This IP represents the NEXTHOP IP! 
-const std::string RoutingTable::getInterface(ip_addr ip) {
-    
-    for(const auto & curr : routingEntries) {
-        if (curr.dest == ip) {
-            return curr.iface;
-        }
-    }
-}
-
 RoutingInterface RoutingTable::getRoutingInterface(const std::string& iface) {
     return routingInterfaces.at(iface);
 }
