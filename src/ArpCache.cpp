@@ -198,7 +198,7 @@ Packet ArpCache::createArpPacket(ip_addr source_ip, ip_addr dest_ip, mac_addr se
     memcpy(arp_hdr_ptr->ar_tha, &dhost, ETHER_ADDR_LEN); /* target hardware address */
     arp_hdr_ptr->ar_tip = htonl(dest_ip); /* dest IP address */
 
-    pac.resize(sizeof(sr_ethernet_hdr_t));
+    pac.resize(sizeof(sr_arp_hdr_t)); 
     memcpy(pac.data() + sizeof(sr_ethernet_hdr_t), &arp_hdr, sizeof(sr_arp_hdr_t));
 
     return pac;
@@ -214,7 +214,10 @@ Packet ArpCache::createICMPPacket(const mac_addr dest_mac, const std::string& if
     mac_addr sender_mac = routingTable->getRoutingInterface(iface).mac;
     memcpy(&eth_hdr.ether_shost, sender_mac.data(), ETHER_ADDR_LEN);
 
-    // TODO: Create IP header information
+    ICMP_packet.resize(sizeof(sr_ethernet_hdr_t));
+    memcpy(ICMP_packet.data(), &eth_hdr, sizeof(sr_ethernet_hdr_t));
+
+    // Create IP header information
     sr_ip_hdr_t ip_header;
     memset(&ip_header, 0, sizeof(sr_ip_hdr_t));
     memcpy(&ip_header, original_pac->data() + sizeof(sr_ethernet_hdr), sizeof(sr_ip_hdr_t));
@@ -243,7 +246,7 @@ Packet ArpCache::createICMPPacket(const mac_addr dest_mac, const std::string& if
         icmp_t3_hdr.icmp_sum = 0;
         icmp_t3_hdr.icmp_sum = cksum(&icmp_t3_hdr, sizeof(sr_icmp_t3_hdr_t));
         // Set data to be original pac's IP header and first 8 bytes of payload
-        memcpy(icmp_t3_hdr.data, &original_pac + sizeof(sr_ethernet_hdr_t), sizeof(sr_ip_hdr_t) + std::min(static_cast<size_t>(8), original_pac->size() - sizeof(sr_ethernet_hdr_t) - sizeof(sr_ip_hdr_t)));
+        memcpy(icmp_t3_hdr.data, original_pac->data() + sizeof(sr_ethernet_hdr_t), sizeof(sr_ip_hdr_t) + std::min(static_cast<size_t>(8), original_pac->size() - sizeof(sr_ethernet_hdr_t) - sizeof(sr_ip_hdr_t)));
         
         // Add to packet
         ICMP_packet.resize(sizeof(sr_icmp_t3_hdr_t));
@@ -264,7 +267,7 @@ Packet ArpCache::createICMPPacket(const mac_addr dest_mac, const std::string& if
         icmp_t11_hdr.icmp_sum = 0;
         icmp_t11_hdr.icmp_sum = cksum(&icmp_t11_hdr, sizeof(sr_icmp_t11_hdr_t));
         // Set data to be original pac's IP header and first 8 bytes of payload
-        memcpy(icmp_t11_hdr.data, &original_pac + sizeof(sr_ethernet_hdr_t), sizeof(sr_ip_hdr_t) + std::min(static_cast<size_t>(8), original_pac->size() - sizeof(sr_ethernet_hdr_t) - sizeof(sr_ip_hdr_t)));
+        memcpy(icmp_t11_hdr.data, original_pac->data() + sizeof(sr_ethernet_hdr_t), sizeof(sr_ip_hdr_t) + std::min(static_cast<size_t>(8), original_pac->size() - sizeof(sr_ethernet_hdr_t) - sizeof(sr_ip_hdr_t)));
 
         // Add to packet
         ICMP_packet.resize(sizeof(sr_icmp_t11_hdr_t));

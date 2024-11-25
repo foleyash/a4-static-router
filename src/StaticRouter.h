@@ -22,12 +22,28 @@ public:
     void handlePacket(std::vector<uint8_t> packet, std::string iface);
 
 private:
+
+    Packet createICMPPacket(const mac_addr dest_mac, const std::string& iface, const uint8_t type, const uint8_t code, std::optional<Packet> original_pac = std::nullopt);
+
     std::mutex mutex;
 
     std::shared_ptr<IRoutingTable> routingTable;
     std::shared_ptr<IPacketSender> packetSender;
 
-    std::unique_ptr<IArpCache> arpCache;
+    std::unique_ptr<IArpCache> arpCache;\
+
+
+    /* Structure of a type11 ICMP header
+    */
+    struct sr_icmp_t11_hdr {
+        uint8_t icmp_type;
+        uint8_t icmp_code;
+        uint16_t icmp_sum;
+        uint16_t unused;
+        uint8_t data[ICMP_DATA_SIZE];
+
+    } __attribute__ ((packed)) ;
+    typedef struct sr_icmp_t11_hdr sr_icmp_t11_hdr_t;
 };
 
 
