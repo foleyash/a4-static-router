@@ -40,6 +40,18 @@ void ArpCache::tick() {
         ArpRequest current_request = it->second;
         if (current_request.timesSent >= 7) {
             // send ICMP message and use the PACKED attribute
+            for (const auto& awaiting_packet : current_request.awaitingPackets) {
+                // Grab the routing interface the awaiting packet came in on
+                sr_ethernet_hdr_t eth_hdr;
+                memcpy(&eth_hdr, awaiting_packet.packet.data(), sizeof(sr_ethernet_hdr_t));
+                mac_addr senderMac;
+                memcpy(&senderMac, eth_hdr.ether_shost, ETHER_ADDR_LEN);
+                RoutingInterface ri = icmps[senderMac];
+                // Construct ICMP packet
+
+                // Send
+            }
+            
             it = requests.erase(it); // (will also get rid of queued packets for this request)
         }
         else if (now - current_request.lastSent >= std::chrono::seconds(1)) {
@@ -98,7 +110,9 @@ void ArpCache::queuePacket(uint32_t ip, const Packet& packet, const std::string&
     const std::unordered_map<std::string, RoutingInterface> check = routingTable->getRoutingInterfaces();
     for (const auto& pair : check) {
         if (pair.second.mac == incomingMac) {
-            icmps[packet] = pair.second;
+            mac_addr senderMac;
+            memcpy(&senderMac, eth_hdr.ether_shost, ETHER_ADDR_LEN);
+            icmps[senderMac] = pair.second;
             break;
         }
     }
@@ -201,10 +215,19 @@ Packet ArpCache::createICMPPacket(const mac_addr dest_mac, const std::string& if
     memcpy(&eth_hdr.ether_shost, sender_mac.data(), ETHER_ADDR_LEN);
 
     // TODO: Create IP header information
-    sr_ip_hdr_t ip_hdr;
-    
+    sr_ip_hdr_t ip_header;
+    memset(&ip_header, 0, sizeof(sr_ip_hdr_t));
+    memcpy(&ip_header, original_pac->data() + sizeof(sr_ethernet_hdr), sizeof(sr_ip_hdr_t));
 
-    // TODO: Type 0
+    // Set fields for an ICMP packet
+    ip_header.ip_dst = ip_header.ip_src;     // Destination IP address is original pac's source ip
+
+    // Calculate checksum
+    ip_header.ip_sum = 0; // Ensure checksum field is 0 before calculating
+    ip_header.ip_sum = cksum(&ip_header, sizeof(sr_ip_hdr_t));
+
+    ICMP_packet.resize(sizeof(sr_ip_hdr_t));
+    memcpy(ICMP_packet.data(), &ip_header, sizeof(sr_ip_hdr_t));
     
     // Type 3
     if (type == 3) {
@@ -214,11 +237,39 @@ Packet ArpCache::createICMPPacket(const mac_addr dest_mac, const std::string& if
         sr_icmp_t3_hdr_t icmp_t3_hdr;
         icmp_t3_hdr.icmp_type = type;
         icmp_t3_hdr.icmp_code = code;
+        icmp_t3_hdr.unused = 0;
         icmp_t3_hdr.next_mtu = 0;
+        // Calculate checksum
+        icmp_t3_hdr.icmp_sum = 0;
+        icmp_t3_hdr.icmp_sum = cksum(&icmp_t3_hdr, sizeof(sr_icmp_t3_hdr_t));
+        // Set data to be original pac's IP header and first 8 bytes of payload
         memcpy(icmp_t3_hdr.data, &original_pac + sizeof(sr_ethernet_hdr_t), sizeof(sr_ip_hdr_t) + std::min(static_cast<size_t>(8), original_pac->size() - sizeof(sr_ethernet_hdr_t) - sizeof(sr_ip_hdr_t)));
         
+        // Add to packet
+        ICMP_packet.resize(sizeof(sr_icmp_t3_hdr_t));
+        memcpy(ICMP_packet.data(), &icmp_t3_hdr, sizeof(sr_icmp_t3_hdr_t));
     }
-    // TODO: Type 11
+
+    // Type 11
+    else if (type == 11) {
+        if (!original_pac.has_value()) {
+            throw std::invalid_argument("Must assign original packet for type 11"); 
+        }
+
+        sr_icmp_t11_hdr_t icmp_t11_hdr;
+        icmp_t11_hdr.icmp_type = type;
+        icmp_t11_hdr.icmp_code = code;
+        icmp_t11_hdr.unused = 0;
+        // Calculate checksum
+        icmp_t11_hdr.icmp_sum = 0;
+        icmp_t11_hdr.icmp_sum = cksum(&icmp_t11_hdr, sizeof(sr_icmp_t11_hdr_t));
+        // Set data to be original pac's IP header and first 8 bytes of payload
+        memcpy(icmp_t11_hdr.data, &original_pac + sizeof(sr_ethernet_hdr_t), sizeof(sr_ip_hdr_t) + std::min(static_cast<size_t>(8), original_pac->size() - sizeof(sr_ethernet_hdr_t) - sizeof(sr_ip_hdr_t)));
+
+        // Add to packet
+        ICMP_packet.resize(sizeof(sr_icmp_t11_hdr_t));
+        memcpy(ICMP_packet.data(), &icmp_t11_hdr, sizeof(sr_icmp_t11_hdr_t));
+    }
 }
 // CHECK FOR CRC???
 // Figure out which interface to exit on, and then use that interface's mac address as the source address

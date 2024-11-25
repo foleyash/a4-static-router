@@ -59,7 +59,19 @@ private:
     
 
     // This map is used for the ICMP MESSAGE. Change this to have whatever functionality we need
-    std::unordered_map<Packet, RoutingInterface> icmps;
+    std::unordered_map<mac_addr, RoutingInterface> icmps; // Maybe need to look at key (could we use source IP of each packet?)
+
+    /* Structure of a type11 ICMP header
+    */
+    struct sr_icmp_t11_hdr {
+    uint8_t icmp_type;
+    uint8_t icmp_code;
+    uint16_t icmp_sum;
+    uint16_t unused;
+    uint8_t data[ICMP_DATA_SIZE];
+
+    } __attribute__ ((packed)) ;
+    typedef struct sr_icmp_t3_hdr sr_icmp_t3_hdr_t;
 };
 
 

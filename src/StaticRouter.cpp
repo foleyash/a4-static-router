@@ -26,11 +26,14 @@ void StaticRouter::handlePacket(std::vector<uint8_t> packet, std::string iface)
 
     /* ORDER OF OPERATIONS */
 
-    // Parse for whether its an IP packet (ICMP) or ARP packet
+    // Parse for whether its an IP packet or ARP packet
+    sr_ethernet_hdr_t eth_hdr;
+    memcpy(&eth_hdr, packet.data(), sizeof(sr_ethernet_hdr_t));
+    if (ntohs(eth_hdr.ether_type) == ethertype_arp) {
+        /*** ---- IF ARP Packet ---- ***/
 
-    /*** ---- IF ARP Packet ---- ***/
-
-    // send packets in queue
+        // send packets in queue
+    }
 
     /*** ---- IF IP Packet ---- ***/
     // 1. Calculate checksum and compare to original
@@ -38,7 +41,7 @@ void StaticRouter::handlePacket(std::vector<uint8_t> packet, std::string iface)
     memcpy(&ip_hdr, packet.data() + sizeof(sr_ethernet_hdr_t), sizeof(sr_ip_hdr_t));
     uint16_t old_sum = ip_hdr.ip_sum;
     ip_hdr.ip_sum = htons(0);
-    uint16_t chksum = ntohs(cksum(packet.data() + sizeof(sr_ethernet_hdr_t), sizeof(sr_ip_hdr_t)));
+    uint16_t chksum = ntohs(cksum(&ip_hdr, sizeof(sr_ip_hdr_t)));
     if (chksum != ntohs(old_sum)) {
         // Maybe message here 
         return;
@@ -63,7 +66,40 @@ void StaticRouter::handlePacket(std::vector<uint8_t> packet, std::string iface)
         1. If the packet is an ICMP echo request and its checksum is valid, send an ICMP echo reply to the sending host.
         2. If the packet contains a TCP or UDP payload, send an ICMP port unreachable to the sending host.
         3. Otherwise, ignore the packet.
-        */        
+        */  
+
+       // This means that the packet that came into one of our routers IP's is an ICMP msg
+       // According to spec we only need to process if its an echo response.  
+       // This should accomplish bullet point 1 
+        if (ip_hdr.ip_p == ip_protocol_icmp) {
+            sr_icmp_hdr_t icmp_hdr;
+            memcpy(&icmp_hdr, packet.data() + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t), sizeof(sr_icmp_hdr_t));
+            if (icmp_hdr.icmp_type != 8 && icmp_hdr.icmp_code != 0) {
+                return;
+            }
+            // now need to verify that the checksum is valid
+            uint16_t prev_sum = ntohs(icmp_hdr.icmp_sum);
+            icmp_hdr.icmp_sum = htons(0);
+            uint16_t checksum = ntohs(cksum(&icmp_hdr,sizeof(sr_icmp_hdr_t)));
+            if (prev_sum != checksum) {
+                return;
+            }
+            icmp_hdr.icmp_type = 0;
+            icmp_hdr.icmp_sum = cksum(&icmp_hdr, sizeof(sr_icmp_hdr_t));
+
+            mac_addr old_dest;
+            memcpy(&old_dest, eth_hdr.ether_dhost, ETHER_ADDR_LEN);
+            memcpy(eth_hdr.ether_dhost, eth_hdr.ether_shost, ETHER_ADDR_LEN);
+            memcpy(eth_hdr.ether_shost, &old_dest, ETHER_ADDR_LEN);
+
+            uint32_t oldIpDst = ip_hdr.ip_dst;
+            ip_hdr.ip_dst = ip_hdr.ip_src;
+            ip_hdr.ip_src = oldIpDst;
+            memcpy(&eth_hdr, packet.data(), sizeof(sr_ethernet_hdr_t));
+            memcpy(&ip_hdr, packet.data() + sizeof(sr_ethernet_hdr_t), sizeof(sr_ip_hdr_t));
+            memcpy(&icmp_hdr, packet.data() + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t), sizeof(sr_icmp_hdr_t));
+            packetSender->sendPacket(packet,iface);
+        }
     }
     
     // 3. Decrement TTL by 1, and recompute checksum over modified header
