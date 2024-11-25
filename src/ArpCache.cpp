@@ -38,7 +38,8 @@ void ArpCache::tick() {
         auto now = std::chrono::steady_clock::now();
         
         ArpRequest current_request = it->second;
-        if (current_request.timesSent >= 7) {
+        std::optional<mac_addr> check = getEntry(current_request.ip);
+        if (current_request.timesSent >= 7 && !check.has_value()) {
             // send ICMP message and use the PACKED attribute
             for (const auto& awaiting_packet : current_request.awaitingPackets) {
                 // Grab the routing interface the awaiting packet came in on
@@ -48,13 +49,14 @@ void ArpCache::tick() {
                 memcpy(&senderMac, eth_hdr.ether_shost, ETHER_ADDR_LEN);
                 RoutingInterface ri = icmps[senderMac];
                 // Construct ICMP packet
-
+                Packet icmp_packet = createICMPPacket(senderMac, ri.name, 3, 1, awaiting_packet.packet);
                 // Send
+                packetSender->sendPacket(icmp_packet, ri.name);
             }
             
             it = requests.erase(it); // (will also get rid of queued packets for this request)
         }
-        else if (now - current_request.lastSent >= std::chrono::seconds(1)) {
+        else if (now - current_request.lastSent >= std::chrono::seconds(1) && !check.has_value()) {
             // Resend packet 
             ip_addr ip = current_request.ip;
             std::string iface = interfaces[ip];
@@ -62,8 +64,8 @@ void ArpCache::tick() {
             packetSender->sendPacket(pac, iface);
             it->second.timesSent++;
         }
-        else {
-            continue;
+        else if(check.has_value()) {
+            sendQueuedPackets(current_request.ip, check.value());
         }
     }
 

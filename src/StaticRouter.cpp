@@ -29,11 +29,11 @@ void StaticRouter::handlePacket(std::vector<uint8_t> packet, std::string iface)
     // Parse for whether its an IP packet or ARP packet
     sr_ethernet_hdr_t eth_hdr;
     memcpy(&eth_hdr, packet.data(), sizeof(sr_ethernet_hdr_t));
-    if (ntohs(eth_hdr.ether_type) == ethertype_arp) {
+    if (ntohs(eth_hdr.ether_type) == ethertype_arp) { // If ARP packet
         /*** ---- IF ARP Packet ---- ***/
         sr_arp_hdr_t arp_hdr;
         memcpy(&arp_hdr, packet.data() + sizeof(sr_ethernet_hdr_t), sizeof(sr_arp_hdr_t));
-        if (ntohs(arp_hdr.ar_op) == arp_op_request) {
+        if (ntohs(arp_hdr.ar_op) == arp_op_request) { // If ARP request
             uint32_t target_ip = ntohl(arp_hdr.ar_tip);
             RoutingInterface inter = routingTable->getRoutingInterface(iface);
             if (target_ip == inter.ip) {
@@ -57,10 +57,13 @@ void StaticRouter::handlePacket(std::vector<uint8_t> packet, std::string iface)
                 return;
             }
         }
-        else {
+        else { // If arp reply (arp_hdr.ar_op == arp_op_reply)
             mac_addr sender_mac;
             memcpy(&sender_mac, arp_hdr.ar_sha, ETHER_ADDR_LEN);
-            uint32_t sender_ip = ntohl(arp_hdr.ar_si);     
+            uint32_t sender_ip = ntohl(arp_hdr.ar_sip);
+            arpCache->addEntry(sender_ip, sender_mac);
+            return;
+            // tick() should handle sending queued packets
         }
         // send packets in queue
     }
@@ -114,29 +117,11 @@ void StaticRouter::handlePacket(std::vector<uint8_t> packet, std::string iface)
             if (prev_sum != checksum) {
                 return;
             }
-            // change the type and recompute the cksum and add it back into icmp_hdr
-            // icmp_hdr.icmp_type = 0;
-            // icmp_hdr.icmp_sum = cksum(&icmp_hdr, sizeof(sr_icmp_hdr_t));
 
             // grab the destination mac address of icmp packet (original sender's mac)
             mac_addr dest_mac;
             Packet icmp_packet = createICMPPacket(dest_mac, iface, 0, 0, packet);
 
-            // // flips the mac src and dst address 
-            // mac_addr old_dest;
-            // memcpy(&old_dest, eth_hdr.ether_dhost, ETHER_ADDR_LEN);
-            // memcpy(eth_hdr.ether_dhost, eth_hdr.ether_shost, ETHER_ADDR_LEN);
-            // memcpy(eth_hdr.ether_shost, &old_dest, ETHER_ADDR_LEN);
-
-            // flips the Ip src and dst address
-            // uint32_t oldIpDst = ip_hdr.ip_dst;
-            // ip_hdr.ip_dst = ip_hdr.ip_src;
-            // ip_hdr.ip_src = oldIpDst;
-
-            // puts the new headers back into the packet and send it off 
-            // memcpy(packet.data(), &eth_hdr, sizeof(sr_ethernet_hdr_t));
-            // memcpy(packet.data() + sizeof(sr_ethernet_hdr_t), &ip_hdr, sizeof(sr_ip_hdr_t));
-            // memcpy(packet.data() + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t), &icmp_hdr , sizeof(sr_icmp_hdr_t));
             packetSender->sendPacket(packet,iface);
             return;
         }
@@ -171,6 +156,7 @@ void StaticRouter::handlePacket(std::vector<uint8_t> packet, std::string iface)
         // Send ICMP Destination net unreachable (type 3, code 0)
         return;
     }
+    
     // 5. Check ARP cache for next-hop MAC address ** ARP Cache Logic here **
     std::optional<mac_addr> dest_mac = arpCache -> getEntry(entry->dest);
     if (!dest_mac.has_value()) {
