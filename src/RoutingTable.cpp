@@ -39,7 +39,7 @@ RoutingTable::RoutingTable(const std::filesystem::path& routingTablePath) {
 }
 
 std::optional<RoutingEntry> RoutingTable::getRoutingEntry(ip_addr ip) {   
-    RoutingEntry best_match;
+    std::optional<RoutingEntry> best_match = std::nullopt;
     
     int max_match_len = -1;
     // this will give us the minimum prefix length
@@ -77,6 +77,7 @@ std::optional<RoutingEntry> RoutingTable::getRoutingEntry(ip_addr ip) {
     // (16) - Prefix (16 bits) is a direct match with our ip (16 bits) (IDEAL MATCH)
     return best_match; 
 }
+
 
 RoutingInterface RoutingTable::getRoutingInterface(const std::string& iface) {
     return routingInterfaces.at(iface);

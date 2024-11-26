@@ -15,6 +15,7 @@
 #include "IPacketSender.h"
 #include "RouterTypes.h"
 #include "IRoutingTable.h"
+#include "RoutingTable.h"
 
 class ArpCache : public IArpCache {
 public:
@@ -30,11 +31,14 @@ public:
     std::optional<mac_addr> getEntry(uint32_t ip) override;
 
     void queuePacket(uint32_t ip, const Packet& packet, const std::string& iface) override;
-
-    Packet createArpPacket(ip_addr sip, ip_addr dip, mac_addr mac);
+   
 
 private:
     void loop();
+
+    void sendQueuedPackets(uint32_t ip, mac_addr mac);
+    Packet createArpPacket(ip_addr sip, ip_addr dip, mac_addr mac);
+    Packet createICMPPacket(const mac_addr dest_mac, const std::string& iface, const uint8_t type, const uint8_t code, Packet original_pac);
 
     std::chrono::milliseconds timeout;
 
@@ -52,6 +56,22 @@ private:
     std::unordered_map<ip_addr, std::string> interfaces;
     // Stores the Packet that will be resent as a ARP REQUEST
     std::unordered_map<ip_addr, Packet> arp_packets;
+    
+
+    // This map is used for the ICMP MESSAGE. Change this to have whatever functionality we need
+    std::unordered_map<ip_addr, RoutingInterface> icmps; // Maybe need to look at key (could we use source IP of each packet?)
+
+    /* Structure of a type11 ICMP header
+    */
+    struct sr_icmp_t11_hdr {
+        uint8_t icmp_type;
+        uint8_t icmp_code;
+        uint16_t icmp_sum;
+        uint16_t unused;
+        uint8_t data[ICMP_DATA_SIZE];
+
+    } __attribute__ ((packed)) ;
+    typedef struct sr_icmp_t11_hdr sr_icmp_t11_hdr_t;
 };
 
 
