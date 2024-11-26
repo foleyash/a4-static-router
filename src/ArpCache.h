@@ -38,7 +38,7 @@ private:
 
     void sendQueuedPackets(uint32_t ip, mac_addr mac);
     Packet createArpPacket(ip_addr sip, ip_addr dip, mac_addr mac);
-    Packet createICMPPacket(const mac_addr dest_mac, const std::string& iface, const uint8_t type, const uint8_t code, std::optional<Packet> original_pac = std::nullopt);
+    Packet createICMPPacket(const mac_addr dest_mac, const std::string& iface, const uint8_t type, const uint8_t code, Packet original_pac);
 
     std::chrono::milliseconds timeout;
 
@@ -59,7 +59,7 @@ private:
     
 
     // This map is used for the ICMP MESSAGE. Change this to have whatever functionality we need
-    std::unordered_map<mac_addr, RoutingInterface> icmps; // Maybe need to look at key (could we use source IP of each packet?)
+    std::unordered_map<ip_addr, RoutingInterface> icmps; // Maybe need to look at key (could we use source IP of each packet?)
 
     /* Structure of a type11 ICMP header
     */
