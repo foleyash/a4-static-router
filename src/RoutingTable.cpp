@@ -46,8 +46,8 @@ std::optional<RoutingEntry> RoutingTable::getRoutingEntry(ip_addr ip) {
     for (auto& entry : routingEntries) {
         ip_addr tmp_ip = ip;
         ip_addr cmp_ip = entry.dest;
-        ip_addr tmp_mask = entry.mask;
-        uint32_t network_bit_len = 0; // This gives us the number of bits for the actual network
+        ip_addr tmp_mask = ntohl(entry.mask);
+        int network_bit_len = 0; // This gives us the number of bits for the actual network
         const uint32_t MAX_NETWORK_BIT_LEN = 32;
         for(int i = 0; i < MAX_NETWORK_BIT_LEN; i++) {
             int isOne = tmp_mask & 0b1; // If lsb is 0 --> return 0, lsb is 1 --> return 1
