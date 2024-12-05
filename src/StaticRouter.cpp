@@ -17,6 +17,9 @@ StaticRouter::StaticRouter(std::unique_ptr<IArpCache> arpCache, std::shared_ptr<
 
 void StaticRouter::handlePacket(std::vector<uint8_t> packet, std::string iface)
 {
+
+    spdlog::info("**** HANDLING NEW PACKET ****");
+
     std::unique_lock lock(mutex);
 
     if (packet.size() < sizeof(sr_ethernet_hdr_t))
@@ -35,9 +38,11 @@ void StaticRouter::handlePacket(std::vector<uint8_t> packet, std::string iface)
         sr_arp_hdr_t arp_hdr;
         memcpy(&arp_hdr, packet.data() + sizeof(sr_ethernet_hdr_t), sizeof(sr_arp_hdr_t));
         if (arp_hdr.ar_op == htons(arp_op_request)) { // If ARP request
+            spdlog::info("received arp request...");
             uint32_t target_ip = arp_hdr.ar_tip;
             RoutingInterface inter = routingTable->getRoutingInterface(iface);
             if (target_ip == inter.ip) {
+                spdlog::info("the target ip matches the interface ip...");
                 // changes the ethernet packet 
                 mac_addr insert = inter.mac;
                 memcpy(eth_hdr.ether_dhost, eth_hdr.ether_shost, ETHER_ADDR_LEN);
@@ -51,14 +56,17 @@ void StaticRouter::handlePacket(std::vector<uint8_t> packet, std::string iface)
 
                 memcpy(packet.data(), &eth_hdr, sizeof(sr_ethernet_hdr_t));
                 memcpy(packet.data() + sizeof(sr_ethernet_hdr_t), &arp_hdr, sizeof(sr_arp_hdr_t));
+                spdlog::info("Sending an ARP reply for IP: {}", ipToString(target_ip));
                 packetSender->sendPacket(packet, iface);
                 return;
             }
             else {
+                spdlog::info("the target ip DOES NOT matc the interfac ip...");
                 return;
             }
         }
         else { // If arp reply (arp_hdr.ar_op == arp_op_reply)
+            spdlog::info("received arp reply...");
             mac_addr sender_mac;
             memcpy(&sender_mac, arp_hdr.ar_sha, ETHER_ADDR_LEN);
             uint32_t sender_ip = arp_hdr.ar_sip;
@@ -82,7 +90,7 @@ void StaticRouter::handlePacket(std::vector<uint8_t> packet, std::string iface)
     ip_hdr.ip_sum = htons(0);
     uint16_t chksum = cksum(&ip_hdr, sizeof(sr_ip_hdr_t));
     if (chksum != old_sum) {
-        std::cout << "Checksum check failed" << std::endl; // TODO: Delete me 
+        spdlog::info("Checksum failed!");
         return;
     }
     
@@ -110,7 +118,10 @@ void StaticRouter::handlePacket(std::vector<uint8_t> packet, std::string iface)
        // This means that the packet that came into one of our routers IP's is an ICMP msg
        // According to spec we only need to process if its an echo response.  
        // This should accomplish bullet point 1 
+
+       spdlog::info("The packet destination is our own");
         if (ip_hdr.ip_p == ip_protocol_icmp) {
+            spdlog::info("recieved icmp request...");
             sr_icmp_hdr_t icmp_hdr;
             memcpy(&icmp_hdr, packet.data() + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t), sizeof(sr_icmp_hdr_t));
             if (icmp_hdr.icmp_type != 8 && icmp_hdr.icmp_code != 0) {
@@ -135,6 +146,7 @@ void StaticRouter::handlePacket(std::vector<uint8_t> packet, std::string iface)
         }
         else if (ip_hdr.ip_p == ip_protocol_tcp || ip_hdr.ip_p == ip_protocol_udp) {
             // Send ICMP port unreachable (type 3, code 3)
+            spdlog::info("tcp or udp packet detected, sending ICMP port unreachable (type 3, code 3)...");
             mac_addr dest_mac; // host's mac address we are sending to
             memcpy(&dest_mac, eth_hdr.ether_shost, ETHER_ADDR_LEN);
             Packet icmp_packet = createICMPPacket(dest_mac, iface, 3, 3, packet);
@@ -143,9 +155,11 @@ void StaticRouter::handlePacket(std::vector<uint8_t> packet, std::string iface)
             
         }
         else { // Any other packet not 
+            spdlog::info("other packet received, dropping");
             return;
         }
     }
+    spdlog::info("The packet is meant to be forwarded somewhere else");
     
     // 3. Decrement TTL by 1, and recompute checksum over modified header
     ip_hdr.ip_ttl--; // Decrement TTL
@@ -157,6 +171,7 @@ void StaticRouter::handlePacket(std::vector<uint8_t> packet, std::string iface)
         packetSender->sendPacket(icmp_packet, iface);
         return;
     }
+    spdlog::info("Made it to here right before memcpy");
     ip_hdr.ip_sum = htons(0);
     ip_hdr.ip_sum = cksum(&ip_hdr, sizeof(sr_ip_hdr_t)); // computing new checksum
     memcpy(&ip_hdr, packet.data() + sizeof(sr_ethernet_hdr_t), sizeof(sr_ip_hdr_t));
@@ -164,8 +179,10 @@ void StaticRouter::handlePacket(std::vector<uint8_t> packet, std::string iface)
     // 4. Use getRoutingEntry() to determine next hop router of destination IP address in packet header
     ip_addr dest_ip = ip_hdr.ip_dst;
     std::optional<RoutingEntry> entry = routingTable->getRoutingEntry(dest_ip); // using longest prefix match
+    spdlog::info("Successfuly got the routing entry");
     if (!entry.has_value()) {
         // Send ICMP Destination net unreachable (type 3, code 0)
+        spdlog::info("no matching routing entry, sending ICMP denstination net unreachable (type 3, code 0)");
         mac_addr dest_mac; // host's mac address we are sending to
         memcpy(dest_mac.data(), eth_hdr.ether_shost, ETHER_ADDR_LEN);
         Packet icmp_packet = createICMPPacket(dest_mac, iface, 3, 0, packet);
@@ -176,10 +193,11 @@ void StaticRouter::handlePacket(std::vector<uint8_t> packet, std::string iface)
     // 5. Check ARP cache for next-hop MAC address ** ARP Cache Logic here **
     std::optional<mac_addr> dest_mac = arpCache -> getEntry(entry->dest);
     if (!dest_mac.has_value()) {
+        spdlog::info("No arp cache entry for IP: {}, queueing packet...", ipToString(entry->dest));
         arpCache->queuePacket(entry->dest, packet, iface);
     }
     else { // Forward the packet
-       
+        spdlog::info("Forwarding packet to MAC address");
         sr_ethernet_hdr_t eth_hdr;
         memcpy(&eth_hdr, packet.data(), sizeof(sr_ethernet_hdr_t));
         // Change the mac source address to next hop router iface mac
@@ -198,23 +216,27 @@ void StaticRouter::handlePacket(std::vector<uint8_t> packet, std::string iface)
 }
 
 
-Packet StaticRouter::createICMPPacket(const mac_addr dest_mac, const std::string& iface, const uint8_t type, const uint8_t code, Packet original_pac) {
+Packet StaticRouter::createICMPPacket(const mac_addr dest_mac, const std::string iface, const uint8_t type, const uint8_t code, Packet original_pac) {
     Packet ICMP_packet;
     
     // Create ethernet header information at the front of the packet
     sr_ethernet_hdr_t eth_hdr;
     eth_hdr.ether_type = htons(sr_ethertype::ethertype_ip); // IP protocol type
     memcpy(&eth_hdr.ether_dhost, dest_mac.data(), ETHER_ADDR_LEN);
+    spdlog::info("Made it past memcpy 1");
     mac_addr sender_mac = routingTable->getRoutingInterface(iface).mac;
     memcpy(&eth_hdr.ether_shost, sender_mac.data(), ETHER_ADDR_LEN);
+    spdlog::info("Made it past memcpy 2");
 
-    ICMP_packet.resize(sizeof(sr_ethernet_hdr_t));
+    ICMP_packet.resize(ICMP_packet.size() + sizeof(sr_ethernet_hdr_t));
     memcpy(ICMP_packet.data(), &eth_hdr, sizeof(sr_ethernet_hdr_t));
+    spdlog::info("Made it past memcpy 3");
 
     // Create IP header information
     sr_ip_hdr_t ip_header;
     memset(&ip_header, 0, sizeof(sr_ip_hdr_t));
     memcpy(&ip_header, original_pac.data() + sizeof(sr_ethernet_hdr), sizeof(sr_ip_hdr_t));
+    spdlog::info("Made it past memcpy 4");
 
     // Set fields for an ICMP packet
     if (type == 0) {
@@ -229,8 +251,9 @@ Packet StaticRouter::createICMPPacket(const mac_addr dest_mac, const std::string
     ip_header.ip_sum = htons(0); // Ensure checksum field is 0 before calculating
     ip_header.ip_sum = cksum(&ip_header, sizeof(sr_ip_hdr_t));
 
-    ICMP_packet.resize(sizeof(sr_ip_hdr_t));
+    ICMP_packet.resize(ICMP_packet.size() + sizeof(sr_ip_hdr_t));
     memcpy(ICMP_packet.data() + sizeof(sr_ethernet_hdr_t), &ip_header, sizeof(sr_ip_hdr_t));
+    spdlog::info("Made it past memcpy 5");
     
     // Type 0
     if (type == 0) {
@@ -242,8 +265,9 @@ Packet StaticRouter::createICMPPacket(const mac_addr dest_mac, const std::string
         icmp_t0_hdr.icmp_sum = cksum(&icmp_t0_hdr, sizeof(sr_icmp_hdr_t));
 
         // Add to packet
-        ICMP_packet.resize(sizeof(sr_icmp_hdr_t));
+        ICMP_packet.resize(ICMP_packet.size() + sizeof(sr_icmp_hdr_t));
         memcpy(ICMP_packet.data() + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t), &icmp_t0_hdr, sizeof(sr_icmp_hdr_t));
+        spdlog::info("Made it past memcpy 6");
     }
 
     // Type 3
@@ -257,11 +281,14 @@ Packet StaticRouter::createICMPPacket(const mac_addr dest_mac, const std::string
         icmp_t3_hdr.icmp_sum = htons(0);
         icmp_t3_hdr.icmp_sum = cksum(&icmp_t3_hdr, sizeof(sr_icmp_t3_hdr_t));
         // Set data to be original pac's IP header and first 8 bytes of payload
+        
         memcpy(icmp_t3_hdr.data, original_pac.data() + sizeof(sr_ethernet_hdr_t), sizeof(sr_ip_hdr_t) + std::min(static_cast<size_t>(8), original_pac.size() - sizeof(sr_ethernet_hdr_t) - sizeof(sr_ip_hdr_t)));
+        spdlog::info("Made it past memcpy 7");
         
         // Add to packet
-        ICMP_packet.resize(sizeof(sr_icmp_t3_hdr_t));
+        ICMP_packet.resize(ICMP_packet.size() + sizeof(sr_icmp_t3_hdr_t));
         memcpy(ICMP_packet.data() + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t), &icmp_t3_hdr, sizeof(sr_icmp_t3_hdr_t));
+        spdlog::info("Made it past memcpy 8");
     }
 
     // Type 11
@@ -276,9 +303,13 @@ Packet StaticRouter::createICMPPacket(const mac_addr dest_mac, const std::string
         icmp_t11_hdr.icmp_sum = cksum(&icmp_t11_hdr, sizeof(sr_icmp_t11_hdr_t));
         // Set data to be original pac's IP header and first 8 bytes of payload
         memcpy(icmp_t11_hdr.data, original_pac.data() + sizeof(sr_ethernet_hdr_t), sizeof(sr_ip_hdr_t) + std::min(static_cast<size_t>(8), original_pac.size() - sizeof(sr_ethernet_hdr_t) - sizeof(sr_ip_hdr_t)));
+        spdlog::info("Made it past memcpy 9");
 
         // Add to packet
-        ICMP_packet.resize(sizeof(sr_icmp_t11_hdr_t));
+        ICMP_packet.resize(ICMP_packet.size() + sizeof(sr_icmp_t11_hdr_t));
         memcpy(ICMP_packet.data(), &icmp_t11_hdr, sizeof(sr_icmp_t11_hdr_t));
+        spdlog::info("Made it past memcpy 10");
     }
+
+    return ICMP_packet;
 }

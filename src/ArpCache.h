@@ -10,6 +10,7 @@
 #include <optional>
 #include <memory>
 #include <mutex>
+#include <atomic> // ADDED THIS IN 
 
 #include "IArpCache.h"
 #include "IPacketSender.h"
@@ -38,7 +39,9 @@ private:
 
     void sendQueuedPackets(uint32_t ip, mac_addr mac);
     Packet createArpPacket(ip_addr sip, ip_addr dip, mac_addr mac);
-    Packet createICMPPacket(const mac_addr dest_mac, const std::string& iface, const uint8_t type, const uint8_t code, Packet original_pac);
+    Packet createICMPPacket(const mac_addr dest_mac, const std::string iface, const uint8_t type, const uint8_t code, Packet original_pac);
+
+    std::optional<mac_addr> tickGetEntry(uint32_t ip);
 
     std::chrono::milliseconds timeout;
 

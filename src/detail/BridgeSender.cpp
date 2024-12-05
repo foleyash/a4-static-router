@@ -1,5 +1,6 @@
 #include "BridgeSender.h"
 
+
 BridgeSender::BridgeSender(std::shared_ptr<WSClient> client,
                            WSClient::connection_ptr connection,
                            std::string pcapPrefix)
@@ -13,7 +14,6 @@ void BridgeSender::sendPacket(Packet packet, const std::string& iface) {
 
     routerPacket.set_interface(iface);
     routerPacket.set_data(packet.data(), packet.size());
-
     dumper.dump(packet);
     send(message);
 }

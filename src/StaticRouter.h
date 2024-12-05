@@ -23,7 +23,7 @@ public:
 
 private:
 
-    Packet createICMPPacket(const mac_addr dest_mac, const std::string& iface, const uint8_t type, const uint8_t code, Packet original_pac);
+    Packet createICMPPacket(const mac_addr dest_mac, const std::string iface, const uint8_t type, const uint8_t code, Packet original_pac);
 
     std::mutex mutex;
 

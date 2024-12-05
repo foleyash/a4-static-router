@@ -177,3 +177,21 @@ void print_hdrs(uint8_t* buf, uint32_t length) {
     spdlog::error("Unrecognized Ethernet Type: {}", ethtype);
   }
 }
+
+// Converts uint32_t ip address in NETWORK ORDER to human-readable string
+std::string ipToString(uint32_t ip) {
+    // Convert IP from network byte order to host byte order
+    uint32_t hostOrderIp = ntohl(ip);
+
+    // Extract each octet
+    uint8_t octet1 = (hostOrderIp >> 24) & 0xFF;
+    uint8_t octet2 = (hostOrderIp >> 16) & 0xFF;
+    uint8_t octet3 = (hostOrderIp >> 8) & 0xFF;
+    uint8_t octet4 = hostOrderIp & 0xFF;
+
+    // Create the human-readable string
+    return std::to_string(octet1) + "." +
+           std::to_string(octet2) + "." +
+           std::to_string(octet3) + "." +
+           std::to_string(octet4);
+}
