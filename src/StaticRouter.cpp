@@ -61,7 +61,7 @@ void StaticRouter::handlePacket(std::vector<uint8_t> packet, std::string iface)
                 return;
             }
             else {
-                spdlog::info("the target ip DOES NOT matc the interfac ip...");
+                spdlog::info("the target ip DOES NOT matc the interface ip...");
                 return;
             }
         }
@@ -141,7 +141,7 @@ void StaticRouter::handlePacket(std::vector<uint8_t> packet, std::string iface)
             memcpy(&dest_mac, eth_hdr.ether_shost, ETHER_ADDR_LEN);
             Packet icmp_packet = createICMPPacket(dest_mac, iface, 0, 0, packet);
 
-            packetSender->sendPacket(packet, iface);
+            packetSender->sendPacket(icmp_packet, iface);
             return;
         }
         else if (ip_hdr.ip_p == ip_protocol_tcp || ip_hdr.ip_p == ip_protocol_udp) {
@@ -194,7 +194,7 @@ void StaticRouter::handlePacket(std::vector<uint8_t> packet, std::string iface)
     std::optional<mac_addr> dest_mac = arpCache -> getEntry(entry->dest);
     if (!dest_mac.has_value()) {
         spdlog::info("No arp cache entry for IP: {}, queueing packet...", ipToString(entry->dest));
-        arpCache->queuePacket(entry->dest, packet, iface);
+        arpCache->queuePacket(entry->gateway, packet, entry->iface);
     }
     else { // Forward the packet
         spdlog::info("Forwarding packet to MAC address");
@@ -223,29 +223,28 @@ Packet StaticRouter::createICMPPacket(const mac_addr dest_mac, const std::string
     sr_ethernet_hdr_t eth_hdr;
     eth_hdr.ether_type = htons(sr_ethertype::ethertype_ip); // IP protocol type
     memcpy(&eth_hdr.ether_dhost, dest_mac.data(), ETHER_ADDR_LEN);
-    spdlog::info("Made it past memcpy 1");
     mac_addr sender_mac = routingTable->getRoutingInterface(iface).mac;
     memcpy(&eth_hdr.ether_shost, sender_mac.data(), ETHER_ADDR_LEN);
-    spdlog::info("Made it past memcpy 2");
-
     ICMP_packet.resize(ICMP_packet.size() + sizeof(sr_ethernet_hdr_t));
     memcpy(ICMP_packet.data(), &eth_hdr, sizeof(sr_ethernet_hdr_t));
-    spdlog::info("Made it past memcpy 3");
-
     // Create IP header information
     sr_ip_hdr_t ip_header;
     memset(&ip_header, 0, sizeof(sr_ip_hdr_t));
     memcpy(&ip_header, original_pac.data() + sizeof(sr_ethernet_hdr), sizeof(sr_ip_hdr_t));
-    spdlog::info("Made it past memcpy 4");
 
     // Set fields for an ICMP packet
-    if (type == 0) {
-        // flips the Ip src and dst address
+    // flips the Ip src and dst address
+    if(type == 0) {
         ip_addr old_ip_dst = ip_header.ip_dst;
         ip_header.ip_dst = ip_header.ip_src;
         ip_header.ip_src = old_ip_dst;
-    } 
-    else {ip_header.ip_dst = ip_header.ip_src;};  // Destination IP address is original pac's source ip for type 3 and 11
+    }
+    else {
+        // call get routing interface  put that as the src ip 
+        ip_header.ip_dst = ip_header.ip_src;
+        ip_header.ip_src = routingTable->getRoutingInterface(iface).ip; // Set source as iface's ip the packet came in on (and goes out on)
+    }
+    
 
     // Calculate checksum
     ip_header.ip_sum = htons(0); // Ensure checksum field is 0 before calculating
@@ -253,7 +252,6 @@ Packet StaticRouter::createICMPPacket(const mac_addr dest_mac, const std::string
 
     ICMP_packet.resize(ICMP_packet.size() + sizeof(sr_ip_hdr_t));
     memcpy(ICMP_packet.data() + sizeof(sr_ethernet_hdr_t), &ip_header, sizeof(sr_ip_hdr_t));
-    spdlog::info("Made it past memcpy 5");
     
     // Type 0
     if (type == 0) {
@@ -267,7 +265,6 @@ Packet StaticRouter::createICMPPacket(const mac_addr dest_mac, const std::string
         // Add to packet
         ICMP_packet.resize(ICMP_packet.size() + sizeof(sr_icmp_hdr_t));
         memcpy(ICMP_packet.data() + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t), &icmp_t0_hdr, sizeof(sr_icmp_hdr_t));
-        spdlog::info("Made it past memcpy 6");
     }
 
     // Type 3
@@ -283,12 +280,10 @@ Packet StaticRouter::createICMPPacket(const mac_addr dest_mac, const std::string
         // Set data to be original pac's IP header and first 8 bytes of payload
         
         memcpy(icmp_t3_hdr.data, original_pac.data() + sizeof(sr_ethernet_hdr_t), sizeof(sr_ip_hdr_t) + std::min(static_cast<size_t>(8), original_pac.size() - sizeof(sr_ethernet_hdr_t) - sizeof(sr_ip_hdr_t)));
-        spdlog::info("Made it past memcpy 7");
         
         // Add to packet
         ICMP_packet.resize(ICMP_packet.size() + sizeof(sr_icmp_t3_hdr_t));
         memcpy(ICMP_packet.data() + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t), &icmp_t3_hdr, sizeof(sr_icmp_t3_hdr_t));
-        spdlog::info("Made it past memcpy 8");
     }
 
     // Type 11
@@ -303,12 +298,10 @@ Packet StaticRouter::createICMPPacket(const mac_addr dest_mac, const std::string
         icmp_t11_hdr.icmp_sum = cksum(&icmp_t11_hdr, sizeof(sr_icmp_t11_hdr_t));
         // Set data to be original pac's IP header and first 8 bytes of payload
         memcpy(icmp_t11_hdr.data, original_pac.data() + sizeof(sr_ethernet_hdr_t), sizeof(sr_ip_hdr_t) + std::min(static_cast<size_t>(8), original_pac.size() - sizeof(sr_ethernet_hdr_t) - sizeof(sr_ip_hdr_t)));
-        spdlog::info("Made it past memcpy 9");
 
         // Add to packet
         ICMP_packet.resize(ICMP_packet.size() + sizeof(sr_icmp_t11_hdr_t));
         memcpy(ICMP_packet.data(), &icmp_t11_hdr, sizeof(sr_icmp_t11_hdr_t));
-        spdlog::info("Made it past memcpy 10");
     }
 
     return ICMP_packet;

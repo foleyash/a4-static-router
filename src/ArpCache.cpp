@@ -31,9 +31,7 @@ void ArpCache::loop() {
 
 
 void ArpCache::tick() {
-    spdlog::info("Requests size: {}", requests.size());
     std::unique_lock lock(mutex);
-    spdlog::info("tick owns the lock");
     // Iterate through all outstanding requests
     std::vector<ip_addr> keystoErase;
     for (auto& pair : requests) {
@@ -55,9 +53,10 @@ void ArpCache::tick() {
                 memcpy(&senderMac, eth_hdr.ether_shost, ETHER_ADDR_LEN);
                 ip_addr sender_ip = ip_hdr.ip_src;
                 RoutingInterface ri = icmps[sender_ip]; // Use sender's ip to grab routing interface to send back on
+                spdlog::info("Creating icmp packet to send on interface: {}", ri.name);
                 
                 // Construct ICMP packet and send
-                spdlog::info("Made it to line right before createPacket");
+                // spdlog::info("Made it to line right before createPacket");
                 Packet icmp_packet = createICMPPacket(senderMac, ri.name, 3, 1, awaiting_packet.packet);
                 // print_hdr_icmp(icmp_packet.data() + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t));
                 // print_hdrs(icmp_packet.data(), icmp_packet.size());
@@ -70,7 +69,7 @@ void ArpCache::tick() {
         }
         else if (now - current_request.lastSent >= std::chrono::seconds(1) && !check.has_value()) {
             // Resend packet 
-            spdlog::info("Resending ARP request to IP: {}", ipToString(pair.first));
+            spdlog::info("Resending ARP request for IP: {}", ipToString(pair.first));
             ip_addr ip = current_request.ip;
             std::string iface = interfaces[ip];
             Packet pac = arp_packets[ip];
@@ -80,9 +79,7 @@ void ArpCache::tick() {
         else if(check.has_value()) {
             spdlog::info("We have the entry for this ARP request");
             sendQueuedPackets(current_request.ip, check.value());
-        }
-        else {
-            spdlog::info("Entered the else clause");
+            keystoErase.push_back(current_request.ip);
         }
     }
     
@@ -97,7 +94,7 @@ void ArpCache::tick() {
 
 void ArpCache::addEntry(uint32_t ip, const mac_addr& mac) {
     std::unique_lock lock(mutex);
-    spdlog::info("addEntry owns this lock");
+    // spdlog::info("addEntry owns this lock");
     
     ArpEntry entry = {ip, mac, std::chrono::steady_clock::now()};
     entries.insert({ip, entry});
@@ -106,7 +103,7 @@ void ArpCache::addEntry(uint32_t ip, const mac_addr& mac) {
 // Input: ip is the next hop ip address (network order)
 std::optional<mac_addr> ArpCache::getEntry(uint32_t ip) {
     std::unique_lock lock(mutex);
-    spdlog::info("getEntry owns this lock");
+    // spdlog::info("getEntry owns this lock");
 
     auto entry = entries.find(ip);
     if (entry != entries.end()) {
@@ -127,6 +124,7 @@ std::optional<mac_addr> ArpCache::tickGetEntry(uint32_t ip) {
     return std::nullopt; // Return nothing if no entry for this ip exists
 }
 
+// iface is the next hop interface
 void ArpCache::queuePacket(uint32_t ip, const Packet& packet, const std::string& iface) {
     std::unique_lock lock(mutex);
     spdlog::info("queuePacket owns this lock");
@@ -167,11 +165,15 @@ void ArpCache::queuePacket(uint32_t ip, const Packet& packet, const std::string&
         // Need to send initial ARP request here (send to broadcast MAC address ff-ff-ff-ff-ff-ff)
         // Grab the mac address (using getRoutingInterface) for the source mac address
         // Ask the next_hop ip address to figure out which MAC address to send to (this MAC address will be the destination address in the packet)
-        RoutingInterface inter_face = routingTable->getRoutingInterface(iface);
+        // std::optional<RoutingEntry> entry = routingTable->getRoutingEntry(ip);
+        // // RoutingInterface inter_face = routingTable->getRoutingInterface(iface);
+        // if(!entry.has_value()) {spdlog::info("Could not find routing entry for IP: {}", ip);}
+
+        RoutingInterface inter_face = routingTable->getRoutingInterface(iface); // Interface corresponding to next hop router
         Packet arp_packet = createArpPacket(inter_face.ip, ip, inter_face.mac);
         arp_packets[ip] = arp_packet;
-        interfaces[ip] = iface;
-        packetSender->sendPacket(arp_packet, iface);
+        interfaces[ip] = inter_face.name; // changed from iface to inter_face.name
+        packetSender->sendPacket(arp_packet, inter_face.name);
     }
     
     requests[ip].awaitingPackets.push_back(pac);
@@ -206,7 +208,7 @@ void ArpCache::sendQueuedPackets(uint32_t ip, mac_addr mac) {
         memcpy(ether_hdr.ether_dhost, mac.data(), ETHER_ADDR_LEN);
         memcpy(ether_hdr.ether_shost, interface.mac.data(), ETHER_ADDR_LEN);
         memcpy(sending.data(), &ether_hdr, sizeof(sr_ethernet_hdr_t));
-        packetSender->sendPacket(sending,interfaceName);
+        packetSender->sendPacket(sending, interfaceName);
     }
 }
 
@@ -255,29 +257,28 @@ Packet ArpCache::createICMPPacket(const mac_addr dest_mac, const std::string ifa
     sr_ethernet_hdr_t eth_hdr;
     eth_hdr.ether_type = htons(sr_ethertype::ethertype_ip); // IP protocol type
     memcpy(&eth_hdr.ether_dhost, dest_mac.data(), ETHER_ADDR_LEN);
-    spdlog::info("Made it past memcpy 1");
     mac_addr sender_mac = routingTable->getRoutingInterface(iface).mac;
     memcpy(&eth_hdr.ether_shost, sender_mac.data(), ETHER_ADDR_LEN);
-    spdlog::info("Made it past memcpy 2");
-
     ICMP_packet.resize(ICMP_packet.size() + sizeof(sr_ethernet_hdr_t));
     memcpy(ICMP_packet.data(), &eth_hdr, sizeof(sr_ethernet_hdr_t));
-    spdlog::info("Made it past memcpy 3");
-
     // Create IP header information
     sr_ip_hdr_t ip_header;
     memset(&ip_header, 0, sizeof(sr_ip_hdr_t));
     memcpy(&ip_header, original_pac.data() + sizeof(sr_ethernet_hdr), sizeof(sr_ip_hdr_t));
-    spdlog::info("Made it past memcpy 4");
 
     // Set fields for an ICMP packet
-    if (type == 0) {
-        // flips the Ip src and dst address
+    // flips the Ip src and dst address
+    if(type == 0) {
         ip_addr old_ip_dst = ip_header.ip_dst;
         ip_header.ip_dst = ip_header.ip_src;
         ip_header.ip_src = old_ip_dst;
-    } 
-    else {ip_header.ip_dst = ip_header.ip_src;};  // Destination IP address is original pac's source ip for type 3 and 11
+    }
+    else {
+        // call get routing interface  put that as the src ip 
+        ip_header.ip_dst = ip_header.ip_src;
+        ip_header.ip_src = routingTable->getRoutingInterface(iface).ip; // Set source as iface's ip the packet came in on (and goes out on)
+    }
+    
 
     // Calculate checksum
     ip_header.ip_sum = htons(0); // Ensure checksum field is 0 before calculating
@@ -285,7 +286,6 @@ Packet ArpCache::createICMPPacket(const mac_addr dest_mac, const std::string ifa
 
     ICMP_packet.resize(ICMP_packet.size() + sizeof(sr_ip_hdr_t));
     memcpy(ICMP_packet.data() + sizeof(sr_ethernet_hdr_t), &ip_header, sizeof(sr_ip_hdr_t));
-    spdlog::info("Made it past memcpy 5");
     
     // Type 0
     if (type == 0) {
@@ -299,7 +299,6 @@ Packet ArpCache::createICMPPacket(const mac_addr dest_mac, const std::string ifa
         // Add to packet
         ICMP_packet.resize(ICMP_packet.size() + sizeof(sr_icmp_hdr_t));
         memcpy(ICMP_packet.data() + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t), &icmp_t0_hdr, sizeof(sr_icmp_hdr_t));
-        spdlog::info("Made it past memcpy 6");
     }
 
     // Type 3
@@ -315,12 +314,10 @@ Packet ArpCache::createICMPPacket(const mac_addr dest_mac, const std::string ifa
         // Set data to be original pac's IP header and first 8 bytes of payload
         
         memcpy(icmp_t3_hdr.data, original_pac.data() + sizeof(sr_ethernet_hdr_t), sizeof(sr_ip_hdr_t) + std::min(static_cast<size_t>(8), original_pac.size() - sizeof(sr_ethernet_hdr_t) - sizeof(sr_ip_hdr_t)));
-        spdlog::info("Made it past memcpy 7");
         
         // Add to packet
         ICMP_packet.resize(ICMP_packet.size() + sizeof(sr_icmp_t3_hdr_t));
         memcpy(ICMP_packet.data() + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t), &icmp_t3_hdr, sizeof(sr_icmp_t3_hdr_t));
-        spdlog::info("Made it past memcpy 8");
     }
 
     // Type 11
@@ -335,14 +332,13 @@ Packet ArpCache::createICMPPacket(const mac_addr dest_mac, const std::string ifa
         icmp_t11_hdr.icmp_sum = cksum(&icmp_t11_hdr, sizeof(sr_icmp_t11_hdr_t));
         // Set data to be original pac's IP header and first 8 bytes of payload
         memcpy(icmp_t11_hdr.data, original_pac.data() + sizeof(sr_ethernet_hdr_t), sizeof(sr_ip_hdr_t) + std::min(static_cast<size_t>(8), original_pac.size() - sizeof(sr_ethernet_hdr_t) - sizeof(sr_ip_hdr_t)));
-        spdlog::info("Made it past memcpy 9");
 
         // Add to packet
         ICMP_packet.resize(ICMP_packet.size() + sizeof(sr_icmp_t11_hdr_t));
         memcpy(ICMP_packet.data(), &icmp_t11_hdr, sizeof(sr_icmp_t11_hdr_t));
-        spdlog::info("Made it past memcpy 10");
     }
 
+    spdlog::info("created ICMP_packet");
     return ICMP_packet;
 }
 // CHECK FOR CRC???
