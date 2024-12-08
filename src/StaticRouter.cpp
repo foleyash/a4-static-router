@@ -123,15 +123,25 @@ void StaticRouter::handlePacket(std::vector<uint8_t> packet, std::string iface)
         if (ip_hdr.ip_p == ip_protocol_icmp) {
             spdlog::info("recieved icmp request...");
             sr_icmp_hdr_t icmp_hdr;
-            memcpy(&icmp_hdr, packet.data() + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t), sizeof(sr_icmp_hdr_t));
+            void * icmp_remaining_buf = packet.data() + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t) + sizeof(sr_icmp_hdr_t);
+            size_t icmp_len = packet.size() - (sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t)); // Length of icmp header w/ type, code, sum, id, seq num, data
+            size_t icmp_remaining_len = packet.size() - (sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t) + sizeof(sr_icmp_hdr_t)); // Length of remaining id, seq num, data
+            std::vector<uint8_t> icmp_hdr_buf(icmp_len, 0); // Initialize buffer of zeros of length of icmp header
+            memcpy(&icmp_hdr, packet.data() + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t), sizeof(sr_icmp_hdr_t)); // Copy contents of type, code, sum
             if (icmp_hdr.icmp_type != 8 && icmp_hdr.icmp_code != 0) {
+                spdlog::info("Not an ICMP echo request packet, dropping...");
                 return;
             }
             // now need to verify that the checksum is valid
             uint16_t prev_sum = icmp_hdr.icmp_sum;
             icmp_hdr.icmp_sum = htons(0);
-            uint16_t checksum = cksum(&icmp_hdr,sizeof(sr_icmp_hdr_t));
+            memcpy(icmp_hdr_buf.data(), &icmp_hdr, sizeof(sr_icmp_hdr_t)); // Copy contents of type, code, sum
+            memcpy(icmp_hdr_buf.data() + sizeof(sr_icmp_hdr_t), icmp_remaining_buf, icmp_remaining_len);
+            uint16_t checksum = cksum(icmp_hdr_buf.data(), icmp_hdr_buf.size()); // May be calculating checksum on incorrect portion of ICMP header (according to ED #989)
             if (prev_sum != checksum) {
+                spdlog::info("ICMP packet's checksum failed!");
+                spdlog::info("Previous sum: {:#x}", prev_sum);
+                spdlog::info("New checksum: {:#x}", checksum);
                 return;
             }
             icmp_hdr.icmp_sum = checksum;
@@ -140,6 +150,8 @@ void StaticRouter::handlePacket(std::vector<uint8_t> packet, std::string iface)
             mac_addr dest_mac;
             memcpy(&dest_mac, eth_hdr.ether_shost, ETHER_ADDR_LEN);
             Packet icmp_packet = createICMPPacket(dest_mac, iface, 0, 0, packet);
+            spdlog::info("ICMP packet size: {}", icmp_packet.size());
+            print_hdrs(icmp_packet.data(), icmp_packet.size());
 
             packetSender->sendPacket(icmp_packet, iface);
             return;
@@ -227,10 +239,26 @@ Packet StaticRouter::createICMPPacket(const mac_addr dest_mac, const std::string
     memcpy(&eth_hdr.ether_shost, sender_mac.data(), ETHER_ADDR_LEN);
     ICMP_packet.resize(ICMP_packet.size() + sizeof(sr_ethernet_hdr_t));
     memcpy(ICMP_packet.data(), &eth_hdr, sizeof(sr_ethernet_hdr_t));
+
     // Create IP header information
+    // *** UPDATED THIS ****
+    /*
+        - I think that we need to generate a new IP header for each ICMP packet created, rather than copy the existing header (according to GPT)
+    */
     sr_ip_hdr_t ip_header;
-    memset(&ip_header, 0, sizeof(sr_ip_hdr_t));
-    memcpy(&ip_header, original_pac.data() + sizeof(sr_ethernet_hdr), sizeof(sr_ip_hdr_t));
+    memcpy(&ip_header, original_pac.data() + sizeof(sr_ethernet_hdr_t), sizeof(sr_ip_hdr_t)); // Copy in entire ip header from original pac, then modify certain attributes
+
+    ip_header.ip_tos = 0;
+    size_t icmp_t0_len = original_pac.size() - (sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t));
+    ip_header.ip_len = htons(sizeof(sr_ip_hdr_t) + ((type == 0) ? icmp_t0_len
+                                                : (type == 3) ? sizeof(sr_icmp_t3_hdr_t)
+                                                : sizeof(sr_icmp_t11_hdr_t))); // IP header + payload size
+    ip_header.ip_id = htons(0x1234);           // use random value since fragmentation is not used
+    ip_header.ip_off = htons(0);               // Set to 0 to not use fragmentation
+    ip_header.ip_ttl = 64;
+    ip_header.ip_p = sr_ip_protocol::ip_protocol_icmp;
+    // memset(&ip_header, 0, sizeof(sr_ip_hdr_t));
+    // memcpy(&ip_header, original_pac.data() + sizeof(sr_ethernet_hdr), sizeof(sr_ip_hdr_t));
 
     // Set fields for an ICMP packet
     // flips the Ip src and dst address
@@ -258,13 +286,30 @@ Packet StaticRouter::createICMPPacket(const mac_addr dest_mac, const std::string
         sr_icmp_hdr_t icmp_t0_hdr;
         icmp_t0_hdr.icmp_type = type;   // type == 0
         icmp_t0_hdr.icmp_code = code;
+        // size_t icmp_len = original_pac.size() - (sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t));
+        // std::vector<uint8_t> icmp_hdr_buf(icmp_len, 0);
+        // memcpy(icmp_hdr_buf.data(), &original_pac + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t), icmp_len);
+        spdlog::info("Updated code 2 has run");
+
+        // Grab id, seq num, data from original_pac
+        void * icmp_remaining_buf = original_pac.data() + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t) + sizeof(sr_icmp_hdr_t);
+        size_t icmp_len = original_pac.size() - (sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t)); // Length of icmp header w/ type, code, sum, id, seq num, data
+        size_t icmp_remaining_len = original_pac.size() - (sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t) + sizeof(sr_icmp_hdr_t)); // Length of remaining id, seq num, data
+        std::vector<uint8_t> icmp_hdr_buf(icmp_len, 0); // Initialize buffer of zeros of length of icmp header
+
         // Calculate checksum
         icmp_t0_hdr.icmp_sum = htons(0);
-        icmp_t0_hdr.icmp_sum = cksum(&icmp_t0_hdr, sizeof(sr_icmp_hdr_t));
+ 
+        memcpy(icmp_hdr_buf.data(), &icmp_t0_hdr, sizeof(sr_icmp_hdr_t)); // Copy contents of type, code, sum
+        memcpy(icmp_hdr_buf.data() + sizeof(sr_icmp_hdr_t), icmp_remaining_buf, icmp_remaining_len); // copy contents of id, seq num , data
+
+        icmp_t0_hdr.icmp_sum = cksum(icmp_hdr_buf.data(), icmp_hdr_buf.size());
+
+        memcpy(icmp_hdr_buf.data(), &icmp_t0_hdr, sizeof(sr_icmp_hdr_t));
 
         // Add to packet
-        ICMP_packet.resize(ICMP_packet.size() + sizeof(sr_icmp_hdr_t));
-        memcpy(ICMP_packet.data() + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t), &icmp_t0_hdr, sizeof(sr_icmp_hdr_t));
+        ICMP_packet.resize(ICMP_packet.size() + icmp_hdr_buf.size());
+        memcpy(ICMP_packet.data() + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t), icmp_hdr_buf.data(), icmp_hdr_buf.size());
     }
 
     // Type 3

@@ -241,7 +241,7 @@ Packet ArpCache::createArpPacket(ip_addr source_ip, ip_addr dest_ip, mac_addr se
     arp_hdr_ptr->ar_op = htons(sr_arp_opcode::arp_op_request); /* ARP opcode */
     memcpy(arp_hdr_ptr->ar_sha, sender_mac.data(), ETHER_ADDR_LEN); /* sender hardware address */
     arp_hdr_ptr->ar_sip = source_ip; /* sender IP address */
-    memcpy(arp_hdr_ptr->ar_tha, &dhost, ETHER_ADDR_LEN); /* target hardware address */
+    memset(arp_hdr_ptr->ar_tha, 0, ETHER_ADDR_LEN); /* target hardware address (should be conventially set to zero; see ED #1004) */
     arp_hdr_ptr->ar_tip = dest_ip; /* dest IP address */
 
     
