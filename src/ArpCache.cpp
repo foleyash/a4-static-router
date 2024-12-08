@@ -76,11 +76,6 @@ void ArpCache::tick() {
             packetSender->sendPacket(pac, iface);
             pair.second.timesSent++;
         }
-        else if(check.has_value()) {
-            spdlog::info("We have the entry for this ARP request");
-            sendQueuedPackets(current_request.ip, check.value());
-            keystoErase.push_back(current_request.ip);
-        }
     }
     
     for (ip_addr key: keystoErase) {
@@ -94,10 +89,18 @@ void ArpCache::tick() {
 
 void ArpCache::addEntry(uint32_t ip, const mac_addr& mac) {
     std::unique_lock lock(mutex);
-    // spdlog::info("addEntry owns this lock");
-    
+
+    if(requests.find(ip) == requests.end()) {
+        spdlog::info("Got an arp reply that we never asked for");
+        return;
+    }
+
+    // ARP request for this ip exists
     ArpEntry entry = {ip, mac, std::chrono::steady_clock::now()};
     entries.insert({ip, entry});
+    spdlog::info("We have the entry for this ARP request");
+    sendQueuedPackets(ip, mac);
+    requests.erase(ip);
 }
 
 // Input: ip is the next hop ip address (network order)
@@ -261,10 +264,26 @@ Packet ArpCache::createICMPPacket(const mac_addr dest_mac, const std::string ifa
     memcpy(&eth_hdr.ether_shost, sender_mac.data(), ETHER_ADDR_LEN);
     ICMP_packet.resize(ICMP_packet.size() + sizeof(sr_ethernet_hdr_t));
     memcpy(ICMP_packet.data(), &eth_hdr, sizeof(sr_ethernet_hdr_t));
+
     // Create IP header information
+    // *** UPDATED THIS ****
+    /*
+        - I think that we need to generate a new IP header for each ICMP packet created, rather than copy the existing header (according to GPT)
+    */
     sr_ip_hdr_t ip_header;
-    memset(&ip_header, 0, sizeof(sr_ip_hdr_t));
-    memcpy(&ip_header, original_pac.data() + sizeof(sr_ethernet_hdr), sizeof(sr_ip_hdr_t));
+    memcpy(&ip_header, original_pac.data() + sizeof(sr_ethernet_hdr_t), sizeof(sr_ip_hdr_t)); // Copy in entire ip header from original pac, then modify certain attributes
+
+    ip_header.ip_tos = 0;
+    size_t icmp_t0_len = original_pac.size() - (sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t));
+    ip_header.ip_len = htons(sizeof(sr_ip_hdr_t) + ((type == 0) ? icmp_t0_len
+                                                : (type == 3) ? sizeof(sr_icmp_t3_hdr_t)
+                                                : sizeof(sr_icmp_t11_hdr_t))); // IP header + payload size
+    ip_header.ip_id = htons(0x1234);           // use random value since fragmentation is not used
+    ip_header.ip_off = htons(0);               // Set to 0 to not use fragmentation
+    ip_header.ip_ttl = 64;
+    ip_header.ip_p = sr_ip_protocol::ip_protocol_icmp;
+    // memset(&ip_header, 0, sizeof(sr_ip_hdr_t));
+    // memcpy(&ip_header, original_pac.data() + sizeof(sr_ethernet_hdr), sizeof(sr_ip_hdr_t));
 
     // Set fields for an ICMP packet
     // flips the Ip src and dst address
@@ -292,13 +311,30 @@ Packet ArpCache::createICMPPacket(const mac_addr dest_mac, const std::string ifa
         sr_icmp_hdr_t icmp_t0_hdr;
         icmp_t0_hdr.icmp_type = type;   // type == 0
         icmp_t0_hdr.icmp_code = code;
+        // size_t icmp_len = original_pac.size() - (sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t));
+        // std::vector<uint8_t> icmp_hdr_buf(icmp_len, 0);
+        // memcpy(icmp_hdr_buf.data(), &original_pac + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t), icmp_len);
+        spdlog::info("Updated code 2 has run");
+
+        // Grab id, seq num, data from original_pac
+        void * icmp_remaining_buf = original_pac.data() + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t) + sizeof(sr_icmp_hdr_t);
+        size_t icmp_len = original_pac.size() - (sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t)); // Length of icmp header w/ type, code, sum, id, seq num, data
+        size_t icmp_remaining_len = original_pac.size() - (sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t) + sizeof(sr_icmp_hdr_t)); // Length of remaining id, seq num, data
+        std::vector<uint8_t> icmp_hdr_buf(icmp_len, 0); // Initialize buffer of zeros of length of icmp header
+
         // Calculate checksum
         icmp_t0_hdr.icmp_sum = htons(0);
-        icmp_t0_hdr.icmp_sum = cksum(&icmp_t0_hdr, sizeof(sr_icmp_hdr_t));
+ 
+        memcpy(icmp_hdr_buf.data(), &icmp_t0_hdr, sizeof(sr_icmp_hdr_t)); // Copy contents of type, code, sum
+        memcpy(icmp_hdr_buf.data() + sizeof(sr_icmp_hdr_t), icmp_remaining_buf, icmp_remaining_len); // copy contents of id, seq num , data
+
+        icmp_t0_hdr.icmp_sum = cksum(icmp_hdr_buf.data(), icmp_hdr_buf.size());
+
+        memcpy(icmp_hdr_buf.data(), &icmp_t0_hdr, sizeof(sr_icmp_hdr_t));
 
         // Add to packet
-        ICMP_packet.resize(ICMP_packet.size() + sizeof(sr_icmp_hdr_t));
-        memcpy(ICMP_packet.data() + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t), &icmp_t0_hdr, sizeof(sr_icmp_hdr_t));
+        ICMP_packet.resize(ICMP_packet.size() + icmp_hdr_buf.size());
+        memcpy(ICMP_packet.data() + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t), icmp_hdr_buf.data(), icmp_hdr_buf.size());
     }
 
     // Type 3
@@ -308,13 +344,14 @@ Packet ArpCache::createICMPPacket(const mac_addr dest_mac, const std::string ifa
         icmp_t3_hdr.icmp_code = code;
         icmp_t3_hdr.unused = htons(0);
         icmp_t3_hdr.next_mtu = htons(0);
+        
+        // Set data to be original pac's IP header and first 8 bytes of payload
+        memcpy(icmp_t3_hdr.data, original_pac.data() + sizeof(sr_ethernet_hdr_t), sizeof(sr_ip_hdr_t) + std::min(static_cast<size_t>(8), original_pac.size() - sizeof(sr_ethernet_hdr_t) - sizeof(sr_ip_hdr_t)));
+        
         // Calculate checksum
         icmp_t3_hdr.icmp_sum = htons(0);
         icmp_t3_hdr.icmp_sum = cksum(&icmp_t3_hdr, sizeof(sr_icmp_t3_hdr_t));
-        // Set data to be original pac's IP header and first 8 bytes of payload
-        
-        memcpy(icmp_t3_hdr.data, original_pac.data() + sizeof(sr_ethernet_hdr_t), sizeof(sr_ip_hdr_t) + std::min(static_cast<size_t>(8), original_pac.size() - sizeof(sr_ethernet_hdr_t) - sizeof(sr_ip_hdr_t)));
-        
+
         // Add to packet
         ICMP_packet.resize(ICMP_packet.size() + sizeof(sr_icmp_t3_hdr_t));
         memcpy(ICMP_packet.data() + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t), &icmp_t3_hdr, sizeof(sr_icmp_t3_hdr_t));
@@ -326,19 +363,20 @@ Packet ArpCache::createICMPPacket(const mac_addr dest_mac, const std::string ifa
         sr_icmp_t11_hdr_t icmp_t11_hdr;
         icmp_t11_hdr.icmp_type = type;
         icmp_t11_hdr.icmp_code = code;
-        icmp_t11_hdr.unused = htons(0);
-        // Calculate checksum
-        icmp_t11_hdr.icmp_sum = htons(0);
-        icmp_t11_hdr.icmp_sum = cksum(&icmp_t11_hdr, sizeof(sr_icmp_t11_hdr_t));
+        icmp_t11_hdr.unused = htonl(0);
+        
         // Set data to be original pac's IP header and first 8 bytes of payload
         memcpy(icmp_t11_hdr.data, original_pac.data() + sizeof(sr_ethernet_hdr_t), sizeof(sr_ip_hdr_t) + std::min(static_cast<size_t>(8), original_pac.size() - sizeof(sr_ethernet_hdr_t) - sizeof(sr_ip_hdr_t)));
 
+        // Calculate checksum
+        icmp_t11_hdr.icmp_sum = htons(0);
+        icmp_t11_hdr.icmp_sum = cksum(&icmp_t11_hdr, sizeof(sr_icmp_t11_hdr_t));
+
         // Add to packet
         ICMP_packet.resize(ICMP_packet.size() + sizeof(sr_icmp_t11_hdr_t));
-        memcpy(ICMP_packet.data(), &icmp_t11_hdr, sizeof(sr_icmp_t11_hdr_t));
+        memcpy(ICMP_packet.data() + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t), &icmp_t11_hdr, sizeof(sr_icmp_t11_hdr_t));
     }
 
-    spdlog::info("created ICMP_packet");
     return ICMP_packet;
 }
 // CHECK FOR CRC???
