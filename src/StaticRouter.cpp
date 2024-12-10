@@ -279,8 +279,17 @@ Packet StaticRouter::createICMPPacket(const mac_addr dest_mac, const std::string
     }
     else {
         // call get routing interface  put that as the src ip 
-        ip_header.ip_dst = ip_header.ip_src;
-        ip_header.ip_src = routingTable->getRoutingInterface(iface).ip; // Set source as iface's ip the packet came in on (and goes out on)
+
+        if (type == 3 && code == 3) {
+            ip_addr old_ip_dst = ip_header.ip_dst;
+            ip_header.ip_dst = ip_header.ip_src;
+            ip_header.ip_src = old_ip_dst;
+        }
+        else {
+            ip_header.ip_dst = ip_header.ip_src;
+            ip_header.ip_src = routingTable->getRoutingInterface(iface).ip; // Set source as iface's ip the packet came in on (and goes out on)
+        }
+        
     }
     
 
